@@ -1,0 +1,230 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+
+  @@map("user_role")
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+
+  @@map("user_status")
+}
+
+enum MilestoneType {
+  SAVINGS_AMOUNT
+  READINESS_SCORE
+  FUNDING_GAP_MAX
+
+  @@map("milestone_type")
+}
+
+model User {
+  id           String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String                @unique @db.Citext
+  passwordHash String                @map("password_hash")
+  role         UserRole              @default(USER)
+  status       UserStatus            @default(ACTIVE)
+  lastLoginAt  DateTime?             @map("last_login_at") @db.Timestamptz(6)
+  createdAt    DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sessions     Session[]
+  retirementPlan RetirementPlan?
+  snapshots    RetirementSnapshot[]
+  scenarios    Scenario[]
+  retirementGoal RetirementGoal?
+  auditLogs    AuditLog[]            @relation("AuditActor")
+
+  @@index([status])
+  @@index([role])
+  @@map("users")
+}
+
+model Session {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  userAgent String?   @map("user_agent")
+  ipAddress String?   @map("ip_address") @db.Inet
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model RetirementPlan {
+  id                             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                         String   @unique @map("user_id") @db.Uuid
+  currentAge                     Int      @map("current_age")
+  retirementAge                  Int      @map("retirement_age")
+  lifeExpectancy                 Int      @map("life_expectancy")
+  currentSavings                 Decimal  @map("current_savings") @db.Decimal(20, 2)
+  monthlyContribution            Decimal  @map("monthly_contribution") @db.Decimal(20, 2)
+  annualContributionIncreaseRate Decimal  @default(0) @map("annual_contribution_increase_rate") @db.Decimal(12, 8)
+  preRetirementReturnRate        Decimal  @map("pre_retirement_return_rate") @db.Decimal(12, 8)
+  postRetirementReturnRate       Decimal  @map("post_retirement_return_rate") @db.Decimal(12, 8)
+  inflationRate                  Decimal  @map("inflation_rate") @db.Decimal(12, 8)
+  monthlyRetirementExpenseToday  Decimal  @map("monthly_retirement_expense_today") @db.Decimal(20, 2)
+  currencyCode                   String   @default("THB") @map("currency_code") @db.VarChar(3)
+  expenseBreakdown               Json?    @map("expense_breakdown")
+  createdAt                      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user               User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  calculationResults CalculationResult[]
+  snapshots          RetirementSnapshot[]
+  scenarios          Scenario[]
+  retirementGoal     RetirementGoal?
+
+  @@map("retirement_plans")
+}
+
+model CalculationResult {
+  id                              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  retirementPlanId                String   @map("retirement_plan_id") @db.Uuid
+  calculationVersion              String   @map("calculation_version")
+  retirementFundRequired          Decimal  @map("retirement_fund_required") @db.Decimal(24, 8)
+  projectedPortfolioAtRetirement  Decimal  @map("projected_portfolio_at_retirement") @db.Decimal(24, 8)
+  fundingGap                      Decimal  @default(0) @map("funding_gap") @db.Decimal(24, 8)
+  fundingSurplus                  Decimal  @default(0) @map("funding_surplus") @db.Decimal(24, 8)
+  requiredMonthlyContribution     Decimal  @map("required_monthly_contribution") @db.Decimal(24, 8)
+  incrementalMonthlyContribution  Decimal  @map("incremental_monthly_contribution") @db.Decimal(24, 8)
+  readinessScore                  Decimal  @map("readiness_score") @db.Decimal(6, 3)
+  financialHealthScore            Decimal? @map("financial_health_score") @db.Decimal(6, 3)
+  readinessBreakdown              Json     @default("{}") @map("readiness_breakdown")
+  financialHealthBreakdown        Json?    @map("financial_health_breakdown")
+  projectionSeries                Json     @map("projection_series")
+  depletionMonthIndex             Int?     @map("depletion_month_index")
+  createdAt                       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  retirementPlan RetirementPlan @relation(fields: [retirementPlanId], references: [id], onDelete: Cascade)
+
+  @@index([retirementPlanId, createdAt(sort: Desc)])
+  @@index([calculationVersion])
+  @@map("calculation_results")
+}
+
+model RetirementSnapshot {
+  id                             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                         String   @map("user_id") @db.Uuid
+  retirementPlanId               String   @map("retirement_plan_id") @db.Uuid
+  calculationVersion             String   @map("calculation_version")
+  currentSavings                 Decimal  @map("current_savings") @db.Decimal(20, 2)
+  monthlyContribution            Decimal  @map("monthly_contribution") @db.Decimal(20, 2)
+  retirementFundRequired         Decimal  @map("retirement_fund_required") @db.Decimal(24, 8)
+  projectedPortfolioAtRetirement Decimal  @map("projected_portfolio_at_retirement") @db.Decimal(24, 8)
+  fundingGap                     Decimal  @map("funding_gap") @db.Decimal(24, 8)
+  readinessScore                 Decimal  @map("readiness_score") @db.Decimal(6, 3)
+  financialHealthScore           Decimal? @map("financial_health_score") @db.Decimal(6, 3)
+  assumptions                    Json
+  createdAt                      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  retirementPlan RetirementPlan @relation(fields: [retirementPlanId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([retirementPlanId, createdAt(sort: Desc)])
+  @@map("retirement_snapshots")
+}
+
+model Scenario {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  retirementPlanId String   @map("retirement_plan_id") @db.Uuid
+  name             String
+  overrides        Json     @default("{}")
+  sortOrder        Int      @default(0) @map("sort_order")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  retirementPlan RetirementPlan @relation(fields: [retirementPlanId], references: [id], onDelete: Cascade)
+  results        ScenarioResult[]
+
+  @@index([userId])
+  @@index([retirementPlanId])
+  @@map("scenarios")
+}
+
+model ScenarioResult {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scenarioId         String   @map("scenario_id") @db.Uuid
+  calculationVersion String   @map("calculation_version")
+  resultSummary      Json     @map("result_summary")
+  projectionSeries   Json     @map("projection_series")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  scenario Scenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+
+  @@index([scenarioId, createdAt(sort: Desc)])
+  @@map("scenario_results")
+}
+
+model RetirementGoal {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String   @unique @map("user_id") @db.Uuid
+  retirementPlanId String   @unique @map("retirement_plan_id") @db.Uuid
+  status           String   @default("ACTIVE")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  retirementPlan RetirementPlan  @relation(fields: [retirementPlanId], references: [id], onDelete: Cascade)
+  milestones     GoalMilestone[]
+
+  @@map("retirement_goals")
+}
+
+model GoalMilestone {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  retirementGoalId String        @map("retirement_goal_id") @db.Uuid
+  type             MilestoneType
+  targetValue      Decimal       @map("target_value") @db.Decimal(24, 8)
+  currencyCode     String?       @map("currency_code") @db.VarChar(3)
+  achieved         Boolean       @default(false)
+  achievedAt       DateTime?     @map("achieved_at") @db.Timestamptz(6)
+  sortOrder        Int           @default(0) @map("sort_order")
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  retirementGoal RetirementGoal @relation(fields: [retirementGoalId], references: [id], onDelete: Cascade)
+
+  @@index([retirementGoalId, sortOrder])
+  @@map("goal_milestones")
+}
+
+model AuditLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String
+  targetType  String?  @map("target_type")
+  targetId    String?  @map("target_id")
+  requestId   String?  @map("request_id")
+  ipAddress   String?  @map("ip_address") @db.Inet
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  actor User? @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([actorUserId, createdAt(sort: Desc)])
+  @@index([targetType, targetId])
+  @@index([requestId])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
